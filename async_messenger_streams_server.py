@@ -1,13 +1,22 @@
 """
-To create server side of the application module asyncio was used. Please see High Level API DOCS the Stream part.
+To create server side of the application module asyncio module was used. Please see High Level API DOCS the Stream part.
+The server use one thread to communicate with many clients with the help of internal logic of asyncio module, which
+allows to fully utilize one thread.
+
+To use server you need just start this .py file.
+
+The idea of the program is to create to asyncio Tasks for each client host, the first task is listening for the incoming
+from the client messages, process them and then send the messages to pseudo db. The second task send incoming messages
+to the client. So coroutine for first Task is reader_cycle, coroutine for second Task is writer_cycle. Finally the
+incoming_call_handler is a main function which convert the coroutines into Tasks, so they can run "simultaneously"
 """
 
 
 import asyncio
 from asyncio import StreamReader, StreamWriter, TimeoutError
-from queue import Queue  # I decided to use Queue since it is FIFO structure
+from queue import Queue  # I decided to use Queue since I wanted to have structure
 
-# address_storage is used instead of database
+# address_storage is used instead of real production database
 # key is a client_name to whom message should be sent
 # value is a Queue which stores message which should be sent to the client
 address_storage = {}
@@ -23,21 +32,24 @@ async def reader_cycle(reader_: StreamReader, client_name: str):
     """
     while True:
         try:
-            message = await asyncio.wait_for(reader_.read(100), timeout=0.5)  # wait 0.5 seconds for incoming message
+            message = await asyncio.wait_for(reader_.read(1024), timeout=0.5)  # wait 0.5 seconds for incoming message
         except TimeoutError:
-            pass  # otherwise raise error to retunr control to writer Task
+            # otherwise raise error to return control to writer Task
+            # it is the desired behaviour so just pass
+            pass
         else:
             if message:
                 message = message.decode('utf8')
-                result = message.split("***")
+                result = message.split("##")
                 if len(result) == 2:  # check if incoming message have correct format
                     to_whom, words = result
                     # build message to send to Queue of receiver
                     # '|' is used to separate messages from each other, since several senders can send message
                     # to one clients simultaneously and client need some mechanism to separate these messages
                     # from one another.
-                    mes = f"{client_name}***{words}|"
+                    mes = f"{client_name}##{words}|"
                     # client_name is the name of sender in the case
+                    # now put the message in a right place in our pseudo db storage
                     if to_whom in address_storage.keys():
                         address_storage[to_whom].put(mes)
 
@@ -68,7 +80,7 @@ async def incoming_call_handler(reader: StreamReader, writer: StreamWriter):
     """
     try:
         client_ip = writer.get_extra_info('peername')  # get ip address of client host
-        client_name = await reader.read(100)  # get alias of the client
+        client_name = await reader.read(1024)  # get alias of the client
         if client_name:
             client_name = client_name.decode('utf8')
             print(f"Incomming connection from: ip {client_ip}, name: {client_name}")
